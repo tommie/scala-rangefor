@@ -5,7 +5,8 @@
 	</description>
 
 	<target name="build" depends="plugin.jar" description="Builds the plugin" />
-	<target name="clean" depends="clean.build" description="Builds the plugin" />
+	<target name="clean" depends="clean.build" description="Cleans the build directory" />
+	<target name="test" depends="test.all" description="Tests the plugin" />
 
 	<property name="src.dir" value="${basedir}/src"/>
 	<property name="test.dir" value="${basedir}/test"/>
@@ -46,4 +47,28 @@
 	<target name="clean.build">
 		<remove dir="${build.dir}" />
 	</target>
+
+	<target name="test.compile.plain" depends="plugin.jar">
+		<mkdir dir="${build.dir}/test-plain"/>
+		<scalac srcdir="${test.dir}" destdir="${build.dir}/test-plain">
+			<include name="*.scala"/>
+			<classpath>
+				<pathelement location="/usr/share/java/scala-library.jar"/>
+				<pathelement location="${scala.comp.jar}"/>
+			</classpath>
+		</scalac>
+	</target>
+
+	<target name="test.compile.plugin" depends="plugin.jar">
+		<mkdir dir="${build.dir}/test-plugin"/>
+		<scalac srcdir="${test.dir}" destdir="${build.dir}/test-plugin" addParams="-Xplugin:${build-jar.dir}/rangefor.jar">
+			<include name="*.scala"/>
+			<classpath>
+				<pathelement location="/usr/share/java/scala-library.jar"/>
+				<pathelement location="${scala.comp.jar}"/>
+			</classpath>
+		</scalac>
+	</target>
+
+	<target name="test.all" depends="test.compile.plain, test.compile.plugin"/>
 </project>
