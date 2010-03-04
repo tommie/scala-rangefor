@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="rangefor" default="build">
+	<description>
+	Range for-loop optimization transform compiler plugin.
+	</description>
+
+	<target name="build" depends="plugin.jar" description="Builds the plugin" />
+	<target name="clean" depends="clean.build" description="Builds the plugin" />
+
+	<property name="src.dir" value="${basedir}/src"/>
+	<property name="test.dir" value="${basedir}/test"/>
+
+	<property name="scalac.args" value=""/>
+	<property name="scala.comp.jar" value="/usr/share/java/scala-compiler.jar"/>
+
+	<property name="build.dir" value="${basedir}/build"/>
+	<property name="build-jar.dir" value="${basedir}/jar"/>
+
+	<target name="init">
+		<taskdef resource="scala/tools/ant/antlib.xml">
+			<classpath>
+				<pathelement location="${scala.comp.jar}"/>
+			</classpath>
+		</taskdef>
+	</target>
+
+	<target name="plugin.compile" depends="init">
+		<mkdir dir="${build.dir}"/>
+		<scalac srcdir="${src.dir}" destdir="${build.dir}">
+			<include name="RangeFor.scala"/>
+			<classpath>
+				<pathelement location="/usr/share/java/scala-library.jar"/>
+				<pathelement location="${scala.comp.jar}"/>
+			</classpath>
+		</scalac>
+	</target>
+
+	<target name="plugin.jar" depends="plugin.compile">
+		<mkdir dir="${build-jar.dir}"/>
+		<jar destfile="${build-jar.dir}/rangefor.jar" manifest="${basedir}/MANIFEST.MF">
+			<fileset dir="${build.dir}" />
+			<fileset file="${basedir}/scalac-plugin.xml" />
+		</jar>
+	</target>
+
+	<target name="clean.build">
+		<remove dir="${build.dir}" />
+	</target>
+</project>

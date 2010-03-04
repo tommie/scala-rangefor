@@ -1,0 +1,4 @@
+<plugin>
+	<name>rangefor</name>
+	<classname>rangefor.RangeFor</classname>
+</plugin>
