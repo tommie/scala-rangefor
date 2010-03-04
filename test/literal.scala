@@ -22,7 +22,7 @@ object LiteralTest {
 	}
 
 	def testTo() {
-		for (i <- 0 until 10000) {
+		for (i <- 0 to 10000) {
 			println("" + i)
 		}
 	}
@@ -34,7 +34,7 @@ object LiteralTest {
 	}
 
 	def testToBy() {
-		for (i <- 0 until 10000 by 2) {
+		for (i <- 0 to 10000 by 2) {
 			println("" + i)
 		}
 	}
