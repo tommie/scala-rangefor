@@ -12,23 +12,26 @@ import nsc.Global
 import nsc.Phase
 import nsc.plugins.Plugin
 import nsc.plugins.PluginComponent
-import nsc.symtab.Flags
 import nsc.transform
 
 
 /**
  * Compiler plugin to transform
  *
- *   for (i <- X: scala.Range) BLOCK
+ *   for (i <- A to|until B [by C]) BLOCK
  *
- * to
+ * into
  *
- *   var i = X.start; while (i < X.end) { BLOCK; i += X.step }
+ *   var i = A; while (i <|<= B) { BLOCK; i += C }
  *
+ * if A happens to be an intWrapper-wrapped term. This is a simple
+ * optimization for a special case that makes Scala code much easier to read.
+ *
+ * @author Tommie Gannert
+ * @date 2010-02-23
 **/
 class RangeFor(val global: Global) extends Plugin {
 	import global._
-	import posAssigner.atPos
 
 	val name = "rangefor"
 	val description = "optimise integer for loops"
@@ -69,12 +72,8 @@ class RangeFor(val global: Global) extends Plugin {
 		**/
 		class RangeForTransformer(unit: CompilationUnit) extends TypingTransformer(unit) {
 			override def transform(tree: Tree): Tree = {
-				val NAME_FOREACH = nme.foreach
-				val NAME_RANGE = newTypeName("Range")
-				val NAME_INCLUSIVE = newTypeName("Inclusive")
-				val NAME_START = newTermName("start")
-				val NAME_END = newTermName("end")
-				val NAME_STEP = newTermName("step")
+				val NAME_BY = newTermName("by")
+				val NAME_INT_WRAPPER = newTermName("intWrapper")
 
 				/**
 				 * Generate the actual while loop AST.
@@ -87,26 +86,19 @@ class RangeFor(val global: Global) extends Plugin {
 				 * @param modArg the argument to the modifier function, usually the constant 1.
 				 * @return the while tree
 				**/
-				def whileLoopFromRange(range: Tree, func: Function, cmp: Name, mod: Name) = {
-					val expr = newTermName(unit.fresh.newName(tree.pos, "rangefor$expr$"))
-					val end = newTermName(unit.fresh.newName(tree.pos, "rangefor$end$"))
-					val step = newTermName(unit.fresh.newName(tree.pos, "rangefor$step$"))
-					val exprSym = currentOwner.newVariable(tree.pos, expr).setInfo(range.tpe)
-					val endSym = currentOwner.newVariable(tree.pos, end).setInfo(func.vparams(0).symbol.info)
-					val stepSym = currentOwner.newVariable(tree.pos, step).setInfo(func.vparams(0).symbol.info)
+				def whileLoop(a: Tree, b: Tree, func: Function, cmp: Name, mod: Name, modArg: Tree) = {
+					import posAssigner.atPos
+
 					val label = newTermName(unit.fresh.newName(tree.pos, "rangefor$"))
 					val labelSym = currentOwner.newLabel(tree.pos, label).setInfo(MethodType(List(), definitions.UnitClass.tpe))
 					val loopvarSym = currentOwner.newVariable(tree.pos, func.vparams(0).name).setInfo(func.vparams(0).symbol.info)
-					val cmpSym = definitions.getMember(definitions.IntClass, cmp).suchThat(_.tpe.paramTypes(0) == func.vparams(0).symbol.info)
-					val modSym = definitions.getMember(definitions.IntClass, mod).suchThat(_.tpe.paramTypes(0) == func.vparams(0).symbol.info)
+					val cmpSym = definitions.getMember(definitions.IntClass, cmp).suchThat(_.tpe.paramTypes(0) == a.tpe.underlying)
+					val modSym = definitions.getMember(definitions.IntClass, mod).suchThat(_.tpe.paramTypes(0) == a.tpe.underlying)
 
 					atPos(tree.pos) { localTyper.typed {
 						Block(
 							List(
-								ValDef(exprSym, range),
-								ValDef(loopvarSym, Select(Ident(exprSym), NAME_START)),
-								ValDef(endSym, Select(Ident(exprSym), NAME_END)),
-								ValDef(stepSym, Select(Ident(exprSym), NAME_STEP))
+								ValDef(loopvarSym, a)
 							),
 							LabelDef(
 								labelSym,
@@ -114,7 +106,7 @@ class RangeFor(val global: Global) extends Plugin {
 								If(
 									Apply(
 										Select(Ident(loopvarSym), cmpSym.name).setSymbol(cmpSym),
-										List(Ident(endSym))
+										List(b)
 									),
 									Block(
 										List(
@@ -126,7 +118,7 @@ class RangeFor(val global: Global) extends Plugin {
 													Ident(loopvarSym),
 													Apply(
 														Select(Ident(loopvarSym), modSym.name).setSymbol(modSym),
-														List(Ident(stepSym))
+														List(modArg)
 													)
 												)
 											)
@@ -143,29 +135,30 @@ class RangeFor(val global: Global) extends Plugin {
 					} }
 				}
 
-				def isScalaPackage(sym: Symbol) =
-					sym.hasFlag(Flags.PACKAGE | Flags.MODULE) && sym.name == nme.scala_tn
+				/**
+				 * Return a comparator name depending on the range builder.
+				**/
+				def nameToCmp(name: Name) = name.toString match {
+					case "to" => nme.LE
+					case "until" => nme.LT
+					case _ => null
+				}
 
-				def isRangeClass(sym: Symbol) =
-					sym.isClass && sym.name == NAME_RANGE && isScalaPackage(sym.owner)
+				/**
+				 * Return the while loop if the how is recognizedm otherwise return the original tree.
+				**/
+				def whileOrPass(a: Tree, b: Tree, func: Function, how: Name, modArg: Tree) = {
+					val cmp = nameToCmp(how)
 
-				def isInclusiveClass(sym: Symbol) =
-					sym.isClass && sym.name == NAME_INCLUSIVE && isRangeClass(sym.owner)
+					if (cmp eq null) tree else whileLoop(a, b, func, cmp, nme.ADD, modArg)
+				}
 
 				super.transform(tree match {
-				case Apply(Select(src, NAME_FOREACH), List(func: Function)) =>
-					src.tpe match {
-					case TypeRef(ThisType(scalaSym), rangeSym, List()) if (isScalaPackage(scalaSym) && isRangeClass(rangeSym)) =>
-						println("range " + currentOwner)
-						whileLoopFromRange(src, func, nme.LT, nme.ADD)
+				case Apply(Select(Apply(Select(Apply(Select(Apply(Select(Select(This(nme.scala_tn), nme.Predef), NAME_INT_WRAPPER), List(a)), how), List(b)), NAME_BY), List(c)), nme.foreach), List(func: Function)) =>
+					whileOrPass(a, b, func, how, c)
 
-					case TypeRef(SingleType(ThisType(scalaSym), rangeSym), inclusiveSym, List()) if (isScalaPackage(scalaSym)) =>
-						println("inclusive " + currentOwner + isRangeClass(rangeSym) + " " + isInclusiveClass(inclusiveSym))
-						whileLoopFromRange(src, func, nme.LE, nme.ADD)
-
-					case _ =>
-						tree
-					}
+				case Apply(Select(Apply(Select(Apply(Select(Select(This(nme.scala_tn), nme.Predef), NAME_INT_WRAPPER), List(a)), how), List(b)), nme.foreach), List(func: Function)) =>
+					whileOrPass(a, b, func, how, Literal(Constant(1)))
 
 				case _ =>
 					tree
